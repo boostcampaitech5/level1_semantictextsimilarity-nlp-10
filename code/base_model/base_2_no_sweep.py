@@ -278,9 +278,11 @@ if __name__ == '__main__':
     # 터미널 실행 예시 : python3 run.py --batch_size=64 ...
     # 실행 시 '--batch_size=64' 같은 인자를 입력하지 않으면 default 값이 기본으로 실행됩니다
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train', default=True)
     parser.add_argument('--project_name', default='sts')
     parser.add_argument('--entity_name', default='nlp-10')
+    parser.add_argument('--my_text', default='')
+    parser.add_argument('--both', default='no', type=str)
+    parser.add_argument('--train', default='yes', type=str)
     # parser.add_argument('--sweeps_cnt', default=5)
     # parser.add_argument('--continue_train', default='False')
 
@@ -295,6 +297,7 @@ if __name__ == '__main__':
     parser.add_argument('--predict_path', default='./data/test.csv')
 
     args = parser.parse_args()
+    print(args, '@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
 
 
     # dataloader와 model을 생성합니다.
@@ -308,11 +311,9 @@ if __name__ == '__main__':
     import wandb
     import datetime
     seed_everything(10, workers=True)
-    my_text = '' # 이번 실행의 설명을 적어주세요. 예시 '에폭5, aug_switch, del 끄고 swap 킴'
+    my_text = args.my_text # parser를 통해 실행의 설명을 적어주세요. 예시 '--my_text='에폭5, aug_switch, del 끄고 swap 킴''
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
-    wandb_logger = WandbLogger(project="sts", entity="nlp-10", name=my_text)
-    wandb.alert(title='#', text=now_time, level=wandb.AlertLevel.INFO) 
-
+    wandb_logger = WandbLogger(project=args.project_name, entity=args.entity_name, name=my_text)
 
     # 주의사항. 150라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
 
@@ -320,22 +321,15 @@ if __name__ == '__main__':
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
     trainer = pl.Trainer(accelerator='gpu', max_epochs=args.max_epoch, logger=wandb_logger, log_every_n_steps=1)
 
-    # Train part
-    trainer.fit(model=model, datamodule=dataloader)
-    trainer.test(model=model, datamodule=dataloader)
+    if args.train=='yes' or args.both=='yes':
+        # Train part
+        trainer.fit(model=model, datamodule=dataloader)
+        trainer.test(model=model, datamodule=dataloader)
 
-    # 학습이 완료된 모델을 저장합니다.
-    torch.save(model, f'model_{now_time}_{my_text}.pt')
+        # 학습이 완료된 모델을 저장합니다.
+        torch.save(model, f'model_{now_time}_{my_text}.pt')
 
-
-    ################################################
-    ################################################
-    ################################################
-    ################################################
-    # train
-    # train==True라면? 위까지만 시행
-    # train=False라면? 위, 아래 둘 다 시행
-    if not args.train:
+    if  args.train=='no' or args.both=='yes':
         # model = torch.load('model.pt')
         predictions = trainer.predict(model=model, datamodule=dataloader)
 
