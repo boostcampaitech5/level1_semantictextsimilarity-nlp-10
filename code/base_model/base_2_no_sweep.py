@@ -107,7 +107,7 @@ class Dataloader(pl.LightningDataModule):
                     new_words = inside_swap_words(new_words)
                 temp.loc[idx, text_column] = ' '.join(new_words)
         temp[self.target_columns[0]] = df[self.target_columns[0]]
-        df = pd.concat([df, temp], axis=1)#0
+        df = pd.concat([df, temp], axis=0)
         df = df.reset_index(drop=True)
 
         return df
@@ -286,7 +286,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--model_name', default='klue/roberta-small', type=str)
     parser.add_argument('--batch_size', default=16, type=int)
-    parser.add_argument('--max_epoch', default=5, type=int)
+    parser.add_argument('--max_epoch', default=3, type=int)
     parser.add_argument('--shuffle', default=True)
     parser.add_argument('--learning_rate', default=1e-5, type=float)
     parser.add_argument('--train_path', default='./data/train.csv')
@@ -308,10 +308,13 @@ if __name__ == '__main__':
     import wandb
     import datetime
     seed_everything(10, workers=True)
-    my_text = '에폭5, aug_switch, del 끄고 swap 킴' # 이번 실행의 설명을 적어주세요
+    my_text = '' # 이번 실행의 설명을 적어주세요. 예시 '에폭5, aug_switch, del 끄고 swap 킴'
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project="sts", entity="nlp-10", name=my_text)
-    wandb.alert(title='', text=now_time, level=wandb.AlertLevel.INFO) 
+    wandb.alert(title='뷁', text=now_time, level=wandb.AlertLevel.INFO) 
+
+
+    # 주의사항. 150라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
 
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
