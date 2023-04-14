@@ -302,11 +302,11 @@ if __name__ == '__main__':
 
         # 학습이 완료된 모델을 저장합니다.
         torch.save(
-            model, f'model_{args.model_name}_bat_{config.batch_size}_lr_{config.lr}.pt')
+            model, f'model_bat_{config.batch_size}_lr_{config.lr}.pt')
         # sweep 한번 finish 시에, slack 알림 발송입니다.
         run.alert(title="Training Finshed",
                   text=f"[batch_size : {config.batch_size} / lr : {config.lr}] Model Finished", level=wandb.AlertLevel.INFO)
-        run.finish()
+        # run.finish()
     # Wandb logging 설정.
 
     if args.train:
