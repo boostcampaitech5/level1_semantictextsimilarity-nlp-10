@@ -311,7 +311,7 @@ if __name__ == '__main__':
     my_text = '' # 이번 실행의 설명을 적어주세요. 예시 '에폭5, aug_switch, del 끄고 swap 킴'
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project="sts", entity="nlp-10", name=my_text)
-    wandb.alert(title='뷁', text=now_time, level=wandb.AlertLevel.INFO) 
+    wandb.alert(title='#', text=now_time, level=wandb.AlertLevel.INFO) 
 
 
     # 주의사항. 150라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
