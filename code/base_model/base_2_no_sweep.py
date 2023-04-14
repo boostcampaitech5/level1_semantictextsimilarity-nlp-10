@@ -320,7 +320,8 @@ if __name__ == '__main__':
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
     trainer = pl.Trainer(accelerator='gpu', max_epochs=args.max_epoch, logger=wandb_logger, log_every_n_steps=1)
-
+    torch.cuda.empty_cache()
+    
     if args.train=='yes' or args.both=='yes':
         # Train part
         trainer.fit(model=model, datamodule=dataloader)
