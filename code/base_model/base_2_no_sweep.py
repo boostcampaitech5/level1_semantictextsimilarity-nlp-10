@@ -86,6 +86,31 @@ class Dataloader(pl.LightningDataModule):
         df = pd.concat([df, temp], axis=0)
         df = df.reset_index(drop=True)
         return df
+    def aug_rand_swap(self, df, p=0.2):
+        def inside_swap_words(new_words):
+            index1 = random.randint(0, len(new_words)-1)
+            index2 = index1
+            count = 0
+            while index1 == index2:
+                index2 = random.randint(0, len(new_words)-1)
+                count += 1
+                if count > 3:
+                    return new_words
+            new_words[index1], new_words[index2] = new_words[index2], new_words[index1]
+            return new_words
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_swap', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                new_words = words.copy()
+                for _ in range(int(len(new_words)*p)):
+                    new_words = inside_swap_words(new_words)
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=1)#0
+        df = df.reset_index(drop=True)
+
+        return df
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -124,7 +149,8 @@ class Dataloader(pl.LightningDataModule):
             # 학습데이터 준비
             # train_data = self.aug_switched_sentence(
                 # train_data, switched_columns=self.text_columns)
-            train_data = self.aug_rand_del(train_data)
+            # train_data = self.aug_rand_del(train_data)
+            train_data = self.aug_rand_swap(train_data)
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
@@ -276,13 +302,13 @@ if __name__ == '__main__':
                             args.test_path, args.predict_path)
     model = Model(args.model_name, args.learning_rate)
 
-
+    
     #wandb logger 
     from pytorch_lightning.loggers import WandbLogger
     import wandb
     import datetime
     seed_everything(10, workers=True)
-    my_text = '에폭5, aug_switch끄고 aug_del 킴' # 이번 실행의 설명을 적어주세요
+    my_text = '에폭5, aug_switch, del 끄고 swap 킴' # 이번 실행의 설명을 적어주세요
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project="sts", entity="nlp-10", name=my_text)
     wandb.alert(title='', text=now_time, level=wandb.AlertLevel.INFO) 
