@@ -2,7 +2,9 @@ import os
 import argparse
 
 import pandas as pd
+import random
 from tqdm.auto import tqdm
+
 import transformers
 import torch
 import torchmetrics
@@ -63,7 +65,26 @@ class Dataloader(pl.LightningDataModule):
                                                                     ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
-
+        return df
+    def aug_rand_del(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_deletion', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                if len(words) == 1:
+                    new_words = words
+                else :
+                    new_words = []
+                    for word in words:
+                        if random.uniform(0, 1) > p:
+                            #not delete
+                            new_words.append(word)
+                if len(new_words)==0:
+                    new_words = words[random.randint(0, len(words)-1)]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
         return df
     # 추가 정의 함수 구간.
 
@@ -101,8 +122,9 @@ class Dataloader(pl.LightningDataModule):
             val_data = pd.read_csv(self.dev_path)
 
             # 학습데이터 준비
-            train_data = self.aug_switched_sentence(
-                train_data, switched_columns=self.text_columns)
+            # train_data = self.aug_switched_sentence(
+                # train_data, switched_columns=self.text_columns)
+            train_data = self.aug_rand_del(train_data)
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
@@ -238,7 +260,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--model_name', default='klue/roberta-small', type=str)
     parser.add_argument('--batch_size', default=16, type=int)
-    parser.add_argument('--max_epoch', default=3, type=int)
+    parser.add_argument('--max_epoch', default=5, type=int)
     parser.add_argument('--shuffle', default=True)
     parser.add_argument('--learning_rate', default=1e-5, type=float)
     parser.add_argument('--train_path', default='./data/train.csv')
@@ -259,10 +281,11 @@ if __name__ == '__main__':
     from pytorch_lightning.loggers import WandbLogger
     import wandb
     import datetime
-    wandb_logger = WandbLogger(project="sts", entity="nlp-10")
-    my_text = '' # 설명을 적어주세요
-    now_time = datetime.datetime.now().strftime('%m월%d일_%H시%M분')
-    wandb.alert(title=now_time, text=my_text, level=wandb.AlertLevel.INFO) 
+    seed_everything(10, workers=True)
+    my_text = '에폭5, aug_switch끄고 aug_del 킴' # 이번 실행의 설명을 적어주세요
+    now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
+    wandb_logger = WandbLogger(project="sts", entity="nlp-10", name=my_text)
+    wandb.alert(title='', text=now_time, level=wandb.AlertLevel.INFO) 
 
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
