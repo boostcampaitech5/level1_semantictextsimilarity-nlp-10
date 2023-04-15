@@ -264,9 +264,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', default=True)
     parser.add_argument('--project_name', default='sts')
-    # parser.add_argument('--entity_name', default='nlp-10')
-    parser.add_argument('--entity_name', default='hmc123123')
-    parser.add_argument('--sweeps_cnt', default=3)
+    parser.add_argument('--entity_name', default='nlp-10')
+    parser.add_argument('--sweeps_cnt', default=3, type=int)
     # parser.add_argument('--continue_train', default='False')
 
     parser.add_argument('--model_name', default='skt/kobert-base-v1', type=str)
@@ -338,8 +337,8 @@ if __name__ == '__main__':
         torch.save(
             model, f'model_bat_{config.batch_size}_lr_{config.lr}.pt')
         # sweep 한번 finish 시에, slack 알림 발송입니다.
-        # run.alert(title="Training Finshed",
-        #           text=f"[batch_size : {config.batch_size} / lr : {config.lr}] Model Finished", level=wandb.AlertLevel.INFO)
+        run.alert(title="Training Finshed",
+                  text=f"[batch_size : {config.batch_size} / lr : {config.lr}] Model Finished", level=wandb.AlertLevel.INFO)
         # run.finish()
     # Wandb logging 설정.
 
@@ -348,7 +347,7 @@ if __name__ == '__main__':
         sweep_id = wandb.sweep(
             sweep_config, project=args.project_name, entity=args.entity_name)
         # count : sweep을 실행할 횟수
-        wandb.agent(sweep_id, sweep_train, count=args.sweeps_cnt)
+        wandb.agent(sweep_id=sweep_id, function=sweep_train, count = args.sweeps_cnt)
         wandb.finish()
 
     else:
