@@ -111,6 +111,24 @@ class Dataloader(pl.LightningDataModule):
         df = df.reset_index(drop=True)
 
         return df
+    def aug_only_middle(self, df, p=0.2):
+        print('@@@@@@@@@@@@@', p, '@@@@@@@@@@@@@@@')
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                start = max(int(len(words)*p), 1)
+                #최소 한 글자는 없애야 해서 max(~, 1)
+                end = len(words)-start
+                if len(words)<=3:
+                    start, end = 0, len(words)
+                
+                new_words = words[start:end]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -150,7 +168,8 @@ class Dataloader(pl.LightningDataModule):
             # train_data = self.aug_switched_sentence(
                 # train_data, switched_columns=self.text_columns)
             # train_data = self.aug_rand_del(train_data)
-            train_data = self.aug_rand_swap(train_data)
+            # train_data = self.aug_rand_swap(train_data)
+            # train_data = self.aug_only_middle(train_data)
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
