@@ -60,7 +60,7 @@ class Dataloader(pl.LightningDataModule):
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=42, replace=False)
+            frac=frac_v, random_state=10, replace=False)
         sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
                                                                     ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
@@ -112,7 +112,6 @@ class Dataloader(pl.LightningDataModule):
 
         return df
     def aug_only_middle(self, df, p=0.2):
-        print('@@@@@@@@@@@@@', p, '@@@@@@@@@@@@@@@')
         temp = pd.DataFrame()
         for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
             for text_column in self.text_columns:
@@ -166,10 +165,10 @@ class Dataloader(pl.LightningDataModule):
 
             # 학습데이터 준비
             # train_data = self.aug_switched_sentence(
-                # train_data, switched_columns=self.text_columns)
-            # train_data = self.aug_rand_del(train_data)
-            # train_data = self.aug_rand_swap(train_data)
-            # train_data = self.aug_only_middle(train_data)
+            #     train_data, switched_columns=self.text_columns) 
+            # train_data = self.aug_rand_del(train_data) 
+            # train_data = self.aug_rand_swap(train_data) 
+            # train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
@@ -317,6 +316,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     print(args, '@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
+    seed_everything(10, workers=True)
 
 
     # dataloader와 model을 생성합니다.
@@ -329,7 +329,6 @@ if __name__ == '__main__':
     from pytorch_lightning.loggers import WandbLogger
     import wandb
     import datetime
-    seed_everything(10, workers=True)
     my_text = args.my_text # parser를 통해 실행의 설명을 적어주세요. 예시 '--my_text='에폭5, aug_switch, del 끄고 swap 킴''
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project=args.project_name, entity=args.entity_name, name=my_text)
