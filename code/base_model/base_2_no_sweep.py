@@ -167,7 +167,7 @@ class Dataloader(pl.LightningDataModule):
             # train_data = self.aug_switched_sentence(
             #     train_data, switched_columns=self.text_columns) 
             # train_data = self.aug_rand_del(train_data) 
-            # train_data = self.aug_rand_swap(train_data) 
+            train_data = self.aug_rand_swap(train_data) 
             # train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
@@ -333,7 +333,7 @@ if __name__ == '__main__':
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project=args.project_name, entity=args.entity_name, name=my_text)
 
-    # 주의사항. 150라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
+    # 주의사항. 170라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
 
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
