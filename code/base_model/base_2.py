@@ -2,8 +2,12 @@ import os
 import argparse
 
 import pandas as pd
-
+import random
 from tqdm.auto import tqdm
+
+# !pip install git+https://github.com/jungin500/py-hanspell
+from hanspell import spell_checker
+import re
 
 import transformers
 import torch
@@ -11,9 +15,7 @@ import torchmetrics
 import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
 from pytorch_lightning.loggers import WandbLogger
-
 import wandb
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 class Dataset(torch.utils.data.Dataset):
@@ -62,13 +64,78 @@ class Dataloader(pl.LightningDataModule):
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=42, replace=False)
+            frac=frac_v, random_state=11, replace=False)
         sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
                                                                     ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
+        return df
+    def aug_rand_del(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_deletion', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                if len(words) == 1:
+                    new_words = words
+                else :
+                    new_words = []
+                    for word in words:
+                        if random.uniform(0, 1) > p:
+                            #not delete
+                            new_words.append(word)
+                if len(new_words)==0:
+                    new_words = words[random.randint(0, len(words)-1)]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def aug_rand_swap(self, df, p=0.2):
+        def inside_swap_words(new_words):
+            index1 = random.randint(0, len(new_words)-1)
+            index2 = index1
+            count = 0
+            while index1 == index2:
+                index2 = random.randint(0, len(new_words)-1)
+                count += 1
+                if count > 3:
+                    return new_words
+            new_words[index1], new_words[index2] = new_words[index2], new_words[index1]
+            return new_words
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_swap', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                new_words = words.copy()
+                for _ in range(int(len(new_words)*p)):
+                    new_words = inside_swap_words(new_words)
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
 
         return df
+    def aug_only_middle(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                start = max(int(len(words)*p), 1)
+                #최소 한 글자는 없애야 해서 max(~, 1)
+                end = len(words)-start
+                if len(words)<=3:
+                    start, end = 0, len(words)
+                
+                new_words = words[start:end]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def prepro_spell_checker(self, data):
+        data[self.text_columns] = data[self.text_columns].applymap(
+            lambda x : spell_checker.check(re.sub("&", " ", x)).checked)
+        return data
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -105,13 +172,17 @@ class Dataloader(pl.LightningDataModule):
             val_data = pd.read_csv(self.dev_path)
 
             # 학습데이터 준비
-            train_data = self.aug_switched_sentence(
-                train_data, switched_columns=self.text_columns)
+            # train_data = self.aug_switched_sentence(
+            #     train_data, switched_columns=self.text_columns) 
+            # train_data = self.aug_rand_del(train_data) 
+            # train_data = self.aug_rand_swap(train_data) 
+            # train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
 
             # 검증데이터 준비
+            val_data = self.prepro_spell_checker(val_data)
             val_inputs, val_targets = self.preprocessing(val_data)
 
             # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
@@ -120,10 +191,12 @@ class Dataloader(pl.LightningDataModule):
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
+            test_data = self.prepro_spell_checker(test_data)
             test_inputs, test_targets = self.preprocessing(test_data)
             self.test_dataset = Dataset(test_inputs, test_targets)
 
             predict_data = pd.read_csv(self.predict_path)
+            predict_data = self.prepro_spell_checker(predict_data)
             predict_inputs, predict_targets = self.preprocessing(predict_data)
             self.predict_dataset = Dataset(predict_inputs, [])
 
