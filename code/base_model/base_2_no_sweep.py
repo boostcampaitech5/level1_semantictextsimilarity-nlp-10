@@ -128,6 +128,12 @@ class Dataloader(pl.LightningDataModule):
         df = pd.concat([df, temp], axis=0)
         df = df.reset_index(drop=True)
         return df
+    def prepro_spell_checker(self, data):
+        from hanspell import spell_checker
+
+        data[self.text_columns] = data[self.text_columns].applymap(
+            lambda x : spell_checker.check(x.replace("&", " ")).checked)
+        return data
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -168,12 +174,13 @@ class Dataloader(pl.LightningDataModule):
             #     train_data, switched_columns=self.text_columns) 
             # train_data = self.aug_rand_del(train_data) 
             train_data = self.aug_rand_swap(train_data) 
-            # train_data = self.aug_only_middle(train_data) 
+            train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
 
             # 검증데이터 준비
+            val_data = self.prepro_spell_checker(val_data)
             val_inputs, val_targets = self.preprocessing(val_data)
 
             # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
@@ -182,10 +189,12 @@ class Dataloader(pl.LightningDataModule):
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
+            test_data = self.prepro_spell_checker(test_data)
             test_inputs, test_targets = self.preprocessing(test_data)
             self.test_dataset = Dataset(test_inputs, test_targets)
 
             predict_data = pd.read_csv(self.predict_path)
+            predict_data = self.prepro_spell_checker(predict_data)
             predict_inputs, predict_targets = self.preprocessing(predict_data)
             self.predict_dataset = Dataset(predict_inputs, [])
 
