@@ -5,6 +5,10 @@ import pandas as pd
 import random
 from tqdm.auto import tqdm
 
+# !pip install git+https://github.com/jungin500/py-hanspell
+from hanspell import spell_checker
+import re
+
 import transformers
 import torch
 import torchmetrics
@@ -129,10 +133,8 @@ class Dataloader(pl.LightningDataModule):
         df = df.reset_index(drop=True)
         return df
     def prepro_spell_checker(self, data):
-        from hanspell import spell_checker
-
         data[self.text_columns] = data[self.text_columns].applymap(
-            lambda x : spell_checker.check(x.replace("&", " ")).checked)
+            lambda x : spell_checker.check(re.sub("&", " ", x)).checked)
         return data
     # 추가 정의 함수 구간.
 
@@ -173,8 +175,8 @@ class Dataloader(pl.LightningDataModule):
             # train_data = self.aug_switched_sentence(
             #     train_data, switched_columns=self.text_columns) 
             # train_data = self.aug_rand_del(train_data) 
-            train_data = self.aug_rand_swap(train_data) 
-            train_data = self.aug_only_middle(train_data) 
+            # train_data = self.aug_rand_swap(train_data) 
+            # train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
@@ -342,7 +344,9 @@ if __name__ == '__main__':
     now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
     wandb_logger = WandbLogger(project=args.project_name, entity=args.entity_name, name=my_text)
 
-    # 주의사항. 170라인을 보시면 아시겠지만 현재 aug_rand_swap만 활성화 되어있습니다.
+    # 주의사항
+    # 현재 무슨 aug가 켜져있는지는 175라인을 일일이
+    # 수작업으로 확인해야 합니다.
 
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
