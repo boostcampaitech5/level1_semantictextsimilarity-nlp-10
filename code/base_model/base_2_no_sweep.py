@@ -2,7 +2,13 @@ import os
 import argparse
 
 import pandas as pd
+import random
 from tqdm.auto import tqdm
+
+# !pip install git+https://github.com/jungin500/py-hanspell
+from hanspell import spell_checker
+import re
+
 import transformers
 import torch
 import torchmetrics
@@ -58,13 +64,78 @@ class Dataloader(pl.LightningDataModule):
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=42, replace=False)
+            frac=frac_v, random_state=11, replace=False)
         sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
                                                                     ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
+        return df
+    def aug_rand_del(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_deletion', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                if len(words) == 1:
+                    new_words = words
+                else :
+                    new_words = []
+                    for word in words:
+                        if random.uniform(0, 1) > p:
+                            #not delete
+                            new_words.append(word)
+                if len(new_words)==0:
+                    new_words = words[random.randint(0, len(words)-1)]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def aug_rand_swap(self, df, p=0.2):
+        def inside_swap_words(new_words):
+            index1 = random.randint(0, len(new_words)-1)
+            index2 = index1
+            count = 0
+            while index1 == index2:
+                index2 = random.randint(0, len(new_words)-1)
+                count += 1
+                if count > 3:
+                    return new_words
+            new_words[index1], new_words[index2] = new_words[index2], new_words[index1]
+            return new_words
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_swap', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                new_words = words.copy()
+                for _ in range(int(len(new_words)*p)):
+                    new_words = inside_swap_words(new_words)
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
 
         return df
+    def aug_only_middle(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                start = max(int(len(words)*p), 1)
+                #최소 한 글자는 없애야 해서 max(~, 1)
+                end = len(words)-start
+                if len(words)<=3:
+                    start, end = 0, len(words)
+                
+                new_words = words[start:end]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def prepro_spell_checker(self, data):
+        data[self.text_columns] = data[self.text_columns].applymap(
+            lambda x : spell_checker.check(re.sub("&", " ", x)).checked)
+        return data
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -101,13 +172,17 @@ class Dataloader(pl.LightningDataModule):
             val_data = pd.read_csv(self.dev_path)
 
             # 학습데이터 준비
-            train_data = self.aug_switched_sentence(
-                train_data, switched_columns=self.text_columns)
+            # train_data = self.aug_switched_sentence(
+            #     train_data, switched_columns=self.text_columns) 
+            # train_data = self.aug_rand_del(train_data) 
+            # train_data = self.aug_rand_swap(train_data) 
+            # train_data = self.aug_only_middle(train_data) 
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
             train_inputs, train_targets = self.preprocessing(train_data)
 
             # 검증데이터 준비
+            val_data = self.prepro_spell_checker(val_data)
             val_inputs, val_targets = self.preprocessing(val_data)
 
             # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
@@ -116,10 +191,12 @@ class Dataloader(pl.LightningDataModule):
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
+            test_data = self.prepro_spell_checker(test_data)
             test_inputs, test_targets = self.preprocessing(test_data)
             self.test_dataset = Dataset(test_inputs, test_targets)
 
             predict_data = pd.read_csv(self.predict_path)
+            predict_data = self.prepro_spell_checker(predict_data)
             predict_inputs, predict_targets = self.preprocessing(predict_data)
             self.predict_dataset = Dataset(predict_inputs, [])
 
@@ -230,9 +307,11 @@ if __name__ == '__main__':
     # 터미널 실행 예시 : python3 run.py --batch_size=64 ...
     # 실행 시 '--batch_size=64' 같은 인자를 입력하지 않으면 default 값이 기본으로 실행됩니다
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train', default=True)
     parser.add_argument('--project_name', default='sts')
     parser.add_argument('--entity_name', default='nlp-10')
+    parser.add_argument('--my_text', default='')
+    parser.add_argument('--both', default='no', type=str)
+    parser.add_argument('--train', default='yes', type=str)
     # parser.add_argument('--sweeps_cnt', default=5)
     # parser.add_argument('--continue_train', default='False')
 
@@ -247,6 +326,8 @@ if __name__ == '__main__':
     parser.add_argument('--predict_path', default='./data/test.csv')
 
     args = parser.parse_args()
+    print(args, '@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
+    seed_everything(11, workers=True)
 
 
     # dataloader와 model을 생성합니다.
@@ -254,36 +335,33 @@ if __name__ == '__main__':
                             args.test_path, args.predict_path)
     model = Model(args.model_name, args.learning_rate)
 
-
+    
     #wandb logger 
     from pytorch_lightning.loggers import WandbLogger
     import wandb
     import datetime
-    wandb_logger = WandbLogger(project="sts", entity="nlp-10")
-    my_text = '' # 설명을 적어주세요
-    now_time = datetime.datetime.now().strftime('%m월%d일_%H시%M분')
-    wandb.alert(title=now_time, text=my_text, level=wandb.AlertLevel.INFO) 
+    my_text = args.my_text # parser를 통해 실행의 설명을 적어주세요. 예시 '--my_text='에폭5, aug_switch, del 끄고 swap 킴''
+    now_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월%d일_%H시%M분')
+    wandb_logger = WandbLogger(project=args.project_name, entity=args.entity_name, name=my_text)
+
+    # 주의사항
+    # 현재 무슨 aug가 켜져있는지는 175라인을 일일이
+    # 수작업으로 확인해야 합니다.
 
 
     # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
     trainer = pl.Trainer(accelerator='gpu', max_epochs=args.max_epoch, logger=wandb_logger, log_every_n_steps=1)
+    torch.cuda.empty_cache()
+    
+    if args.train=='yes' or args.both=='yes':
+        # Train part
+        trainer.fit(model=model, datamodule=dataloader)
+        trainer.test(model=model, datamodule=dataloader)
 
-    # Train part
-    trainer.fit(model=model, datamodule=dataloader)
-    trainer.test(model=model, datamodule=dataloader)
+        # 학습이 완료된 모델을 저장합니다.
+        torch.save(model, f'model_{now_time}_{my_text}.pt')
 
-    # 학습이 완료된 모델을 저장합니다.
-    torch.save(model, f'model_{now_time}_{my_text}.pt')
-
-
-    ################################################
-    ################################################
-    ################################################
-    ################################################
-    # train
-    # train==True라면? 위까지만 시행
-    # train=False라면? 위, 아래 둘 다 시행
-    if not args.train:
+    if  args.train=='no' or args.both=='yes':
         # model = torch.load('model.pt')
         predictions = trainer.predict(model=model, datamodule=dataloader)
 
@@ -293,4 +371,5 @@ if __name__ == '__main__':
         # output 형식을 불러와서 예측된 결과로 바꿔주고, output.csv로 출력합니다.
         output = pd.read_csv('./data/sample_submission.csv')
         output['target'] = predictions
+        output['target'] = output['target'].applymap(lambda x: min(max(0.0, x), 5.0))
         output.to_csv(f'output_{now_time}_{my_text}.csv', index=False)
