@@ -371,4 +371,5 @@ if __name__ == '__main__':
         # output 형식을 불러와서 예측된 결과로 바꿔주고, output.csv로 출력합니다.
         output = pd.read_csv('./data/sample_submission.csv')
         output['target'] = predictions
+        output['target'] = output['target'].applymap(lambda x: min(max(0.0, x), 5.0))
         output.to_csv(f'output_{now_time}_{my_text}.csv', index=False)
