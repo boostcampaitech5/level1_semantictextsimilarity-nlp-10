@@ -64,7 +64,7 @@ class Dataloader(pl.LightningDataModule):
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=10, replace=False)
+            frac=frac_v, random_state=11, replace=False)
         sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
                                                                     ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
@@ -327,7 +327,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     print(args, '@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
-    seed_everything(10, workers=True)
+    seed_everything(11, workers=True)
 
 
     # dataloader와 model을 생성합니다.
