@@ -1,18 +1,17 @@
 import os
 import argparse
-
 import pandas as pd
-
-from tqdm.auto import tqdm
-
 import transformers
 import torch
+import wandb
 import torchmetrics
 import pytorch_lightning as pl
+
+from sklearn.model_selection import KFold
+from tqdm.auto import tqdm
 from pytorch_lightning import seed_everything
 from pytorch_lightning.loggers import WandbLogger
 
-import wandb
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -35,22 +34,27 @@ class Dataset(torch.utils.data.Dataset):
 
 
 class Dataloader(pl.LightningDataModule):
-    def __init__(self, model_name, batch_size, shuffle, train_path, dev_path, test_path, predict_path, is_test=False):
+    def __init__(self, model_name, batch_size, shuffle, train_path, dev_path, test_path, predict_path, k_fold=True, num_split=10, k=1, seed=11):
         super().__init__()
+        # Base Info
         self.model_name = model_name
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.seed = seed
 
+        # Path
         self.train_path = train_path
         self.dev_path = dev_path
         self.test_path = test_path
         self.predict_path = predict_path
 
+        # Dataset Init
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
         self.predict_dataset = None
 
+        # Preproces
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_name, max_length=160)
         self.target_columns = ['label']
@@ -59,17 +63,29 @@ class Dataloader(pl.LightningDataModule):
 
         self.automatic_optimization = False
 
+        # K-Fold
+        self.k_fold = k_fold
+        self.num_split = num_split
+        self.k = k
+
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=42, replace=False)
-        sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
-                                                                    ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
+            frac=frac_v, random_state=self.seed, replace=False)
+        sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]] =\
+            sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
 
         return df
+
     # 추가 정의 함수 구간.
+    def reduce_sampling_label_close_zero(self, df, frac_v=0.6):
+        df = df.drop(df[df['label'] < 0.3]['label'].sample(frac=frac_v, random_state=self.seed, replace=False, axis=0).index)
+        return df
+    def aug_label_close_five(self, df, frac_v=0.8):
+        df = pd.concat([df, df[df['label'] > 4.5].sample(frac=frac_v, replace=False, random_state=self.seed)], axis=0)
+        return df
 
     def tokenizing(self, df_input):
         data_input = []
@@ -104,19 +120,37 @@ class Dataloader(pl.LightningDataModule):
             train_data = pd.read_csv(self.train_path)
             val_data = pd.read_csv(self.dev_path)
 
-            # 학습데이터 준비
-            train_data = self.aug_switched_sentence(
-                train_data, switched_columns=self.text_columns)
-            # 다양한 data aug는 여기에서
+            # 학습데이터 준비(Data Aug) => 나중에 Data Aug를 담당하는 하나의 함수로의 통합 필요
+            train_data = self.reduce_sampling_label_close_zero(train_data)
+            train_data = self.aug_label_close_five(train_data)
+            train_data = self.aug_switched_sentence(train_data,
+                                                    switched_columns=self.text_columns)
+
             self.after_aug_train_data = train_data
-            train_inputs, train_targets = self.preprocessing(train_data)
 
-            # 검증데이터 준비
-            val_inputs, val_targets = self.preprocessing(val_data)
+            if self.k_fold:
+                total_data = pd.concat([train_data, val_data], axis=0)
+                total_input, total_targets = self.preprocessing(total_data)
+                total_dataset = Dataset(total_input, total_targets)
 
-            # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
-            self.train_dataset = Dataset(train_inputs, train_targets)
-            self.val_dataset = Dataset(val_inputs, val_targets)
+                kf = KFold(n_splits=self.num_split, shuffle=True, random_state=self.seed)
+                all_splits = [k for k in kf.split(total_dataset)]
+
+                train_idx, val_idx = all_splits[self.k]
+                train_idx, val_idx = train_idx.tolist(), val_idx.tolist()
+
+                self.train_dataset = [total_dataset[i] for i in train_idx]
+                self.val_dataset = [total_dataset[i] for i in val_idx]
+            else:
+                # 학습데이터 준비
+                train_inputs, train_targets = self.preprocessing(train_data)
+
+                # 검증데이터 준비
+                val_inputs, val_targets = self.preprocessing(val_data)
+
+                # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
+                self.train_dataset = Dataset(train_inputs, train_targets)
+                self.val_dataset = Dataset(val_inputs, val_targets)
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
@@ -249,6 +283,8 @@ if __name__ == '__main__':
     parser.add_argument('--dev_path', default='./data/dev.csv')
     parser.add_argument('--test_path', default='./data/dev.csv')
     parser.add_argument('--predict_path', default='./data/test.csv')
+    parser.add_argument('--k_fold', default=10, type=int)
+    parser.add_argument('--seed', default=11, type=int)
 
     args = parser.parse_args()
 
@@ -282,10 +318,10 @@ if __name__ == '__main__':
         run.name = f"model: {args.model_name} / batch_size: {config.batch_size} / lr: {config.lr}"
 
         # seed_everything import 하시고 사용하셔야 합니다. [ 모델 생성 및 data loader 학습 코드 위치 ]
-        seed_everything(10, workers=True)
+        seed_everything(args.seed, workers=True)
 
         dataloader = Dataloader(args.model_name, config.batch_size, args.shuffle, args.train_path, args.dev_path,
-                                args.test_path, args.predict_path)
+                                args.test_path, args.predict_path, args.k_fold, args.seed)
 
         # dataloader와 model을 생성합니다.
         model = Model(args.model_name, config.lr)
