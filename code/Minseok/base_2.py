@@ -1,22 +1,24 @@
 import os
 import argparse
+
 import pandas as pd
-# !pip install git+https://github.com/jungin500/py-hanspell
-from hanspell import spell_checker
-import re
 
-import transformers
-import torch
-import wandb
-import torchmetrics
-import pytorch_lightning as pl
-
-from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
+
+import torch
+import torchmetrics
+
+import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
 from pytorch_lightning.loggers import WandbLogger
 
+import transformers
+from transformers import PreTrainedTokenizerFast
+
+import wandb
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, inputs, targets=[]):
@@ -37,116 +39,41 @@ class Dataset(torch.utils.data.Dataset):
 
 
 class Dataloader(pl.LightningDataModule):
-    def __init__(self, model_name, batch_size, shuffle, train_path, dev_path, test_path, predict_path, k_fold=True, num_split=10, k=1, seed=11):
+    def __init__(self, model_name, batch_size, shuffle, train_path, dev_path, test_path, predict_path, is_test=False):
         super().__init__()
-        # Base Info
         self.model_name = model_name
         self.batch_size = batch_size
         self.shuffle = shuffle
-        self.seed = seed
 
-        # Path
         self.train_path = train_path
         self.dev_path = dev_path
         self.test_path = test_path
         self.predict_path = predict_path
 
-        # Dataset Init
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
         self.predict_dataset = None
 
-        # Preproces
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_name, max_length=160)
+
         self.target_columns = ['label']
         self.delete_columns = ['id']
         self.text_columns = ['sentence_1', 'sentence_2']
 
         self.automatic_optimization = False
 
-        # K-Fold
-        self.k_fold = k_fold
-        self.num_split = num_split
-        self.k = k
-
     # 추가 정의 함수 구간.
     def aug_switched_sentence(self, df, switched_columns, frac_v=0.8):
         sampled_train_data = df.sample(
-            frac=frac_v, random_state=self.seed, replace=False)
-        sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]] =\
-            sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
+            frac=frac_v, random_state=42, replace=False)
+        sampled_train_data[switched_columns[0]], sampled_train_data[switched_columns[1]
+                                                                    ] = sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
-        return df
-    def aug_rand_del(self, df, p=0.2):
-        temp = pd.DataFrame()
-        for idx, item in tqdm(df.iterrows(), desc='random_deletion', total=len(df)):
-            for text_column in self.text_columns:
-                words = item[text_column].split()
-                if len(words) == 1:
-                    new_words = words
-                else :
-                    new_words = []
-                    for word in words:
-                        if random.uniform(0, 1) > p:
-                            #not delete
-                            new_words.append(word)
-                if len(new_words)==0:
-                    new_words = words[random.randint(0, len(words)-1)]
-                temp.loc[idx, text_column] = ' '.join(new_words)
-        temp[self.target_columns[0]] = df[self.target_columns[0]]
-        df = pd.concat([df, temp], axis=0)
-        df = df.reset_index(drop=True)
-        return df
-    def aug_rand_swap(self, df, p=0.2):
-        def inside_swap_words(new_words):
-            index1 = random.randint(0, len(new_words)-1)
-            index2 = index1
-            count = 0
-            while index1 == index2:
-                index2 = random.randint(0, len(new_words)-1)
-                count += 1
-                if count > 3:
-                    return new_words
-            new_words[index1], new_words[index2] = new_words[index2], new_words[index1]
-            return new_words
-        temp = pd.DataFrame()
-        for idx, item in tqdm(df.iterrows(), desc='random_swap', total=len(df)):
-            for text_column in self.text_columns:
-                words = item[text_column].split()
-                new_words = words.copy()
-                for _ in range(int(len(new_words)*p)):
-                    new_words = inside_swap_words(new_words)
-                temp.loc[idx, text_column] = ' '.join(new_words)
-        temp[self.target_columns[0]] = df[self.target_columns[0]]
-        df = pd.concat([df, temp], axis=0)
-        df = df.reset_index(drop=True)
 
         return df
-    def aug_only_middle(self, df, p=0.2):
-        temp = pd.DataFrame()
-        for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
-            for text_column in self.text_columns:
-                words = item[text_column].split()
-                start = max(int(len(words)*p), 1)
-                #최소 한 글자는 없애야 해서 max(~, 1)
-                end = len(words)-start
-                if len(words)<=3:
-                    start, end = 0, len(words)
-                
-                new_words = words[start:end]
-                temp.loc[idx, text_column] = ' '.join(new_words)
-        temp[self.target_columns[0]] = df[self.target_columns[0]]
-        df = pd.concat([df, temp], axis=0)
-        df = df.reset_index(drop=True)
-        return df
-    def prepro_spell_checker(self, data):
-        data[self.text_columns] = data[self.text_columns].applymap(
-            lambda x : spell_checker.check(re.sub("&", " ", x)).checked)
-        return data
-
     # 추가 정의 함수 구간.
 
     def tokenizing(self, df_input):
@@ -156,8 +83,9 @@ class Dataloader(pl.LightningDataModule):
             # 두 입력 문장을 [SEP] 토큰으로 이어붙여서 전처리합니다.
             text = '[SEP]'.join([item[text_column]
                                  for text_column in self.text_columns])
+            # outputs = self.tokenizer.encode(text, return_tensors='pt', add_special_tokens=True, padding='max_length', truncation=True, max_length=160)
             outputs = self.tokenizer(
-                text, add_special_tokens=True, padding='max_length', truncation=True)
+                text, add_special_tokens=True, padding='max_length', truncation=True, max_length=160)
             data_input.append(outputs['input_ids'])
 
         return data_input
@@ -180,51 +108,30 @@ class Dataloader(pl.LightningDataModule):
         if stage == 'fit':
             # 학습 데이터와 검증 데이터셋을 호출합니다
             train_data = pd.read_csv(self.train_path)
+            # new_train_data = pd.read_csv("new_dataset.csv")
+            # train_data = pd.concat([train_data, new_train_data])
             val_data = pd.read_csv(self.dev_path)
 
             # 학습데이터 준비
-            # train_data = self.aug_switched_sentence(
-            #     train_data, switched_columns=self.text_columns) 
-            # train_data = self.aug_rand_del(train_data) 
-            # train_data = self.aug_rand_swap(train_data) 
-            # train_data = self.aug_only_middle(train_data) 
+            train_data = self.aug_switched_sentence(
+                train_data, switched_columns=self.text_columns)
             # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
+            train_inputs, train_targets = self.preprocessing(train_data)
 
             # 검증데이터 준비
-            val_data = self.prepro_spell_checker(val_data)
-            if self.k_fold:
-                total_data = pd.concat([train_data, val_data], axis=0)
-                total_input, total_targets = self.preprocessing(total_data)
-                total_dataset = Dataset(total_input, total_targets)
+            val_inputs, val_targets = self.preprocessing(val_data)
 
-                kf = KFold(n_splits=self.num_split, shuffle=True, random_state=self.seed)
-                all_splits = [k for k in kf.split(total_dataset)]
-
-                train_idx, val_idx = all_splits[self.k]
-                train_idx, val_idx = train_idx.tolist(), val_idx.tolist()
-
-                self.train_dataset = [total_dataset[i] for i in train_idx]
-                self.val_dataset = [total_dataset[i] for i in val_idx]
-            else:
-                # 학습데이터 준비
-                train_inputs, train_targets = self.preprocessing(train_data)
-
-                # 검증데이터 준비
-                val_inputs, val_targets = self.preprocessing(val_data)
-
-                # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
-                self.train_dataset = Dataset(train_inputs, train_targets)
-                self.val_dataset = Dataset(val_inputs, val_targets)
+            # train 데이터만 shuffle을 적용해줍니다, 필요하다면 val, test 데이터에도 shuffle을 적용할 수 있습니다
+            self.train_dataset = Dataset(train_inputs, train_targets)
+            self.val_dataset = Dataset(val_inputs, val_targets)
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
-            test_data = self.prepro_spell_checker(test_data)
             test_inputs, test_targets = self.preprocessing(test_data)
             self.test_dataset = Dataset(test_inputs, test_targets)
 
             predict_data = pd.read_csv(self.predict_path)
-            predict_data = self.prepro_spell_checker(predict_data)
             predict_inputs, predict_targets = self.preprocessing(predict_data)
             self.predict_dataset = Dataset(predict_inputs, [])
 
@@ -261,12 +168,13 @@ class Dataloader(pl.LightningDataModule):
 
 
 class Model(pl.LightningModule):
-    def __init__(self, model_name, lr):
+    def __init__(self, model_name, lr, warmup_step):
         super().__init__()
         self.save_hyperparameters()
 
         self.model_name = model_name
         self.lr = lr
+        self.warmup_step = warmup_step
 
         # 사용할 모델을 호출합니다.
         self.plm = transformers.AutoModelForSequenceClassification.from_pretrained(
@@ -277,7 +185,7 @@ class Model(pl.LightningModule):
 
     def forward(self, x):
         x = self.plm(x)['logits']
-
+        # x = torch.sum(x, 1)
         return x
 
     def training_step(self, batch, batch_idx):
@@ -315,7 +223,7 @@ class Model(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer, total_iters=500)
+            optimizer, total_iters=self.warmup_step)
 
         return (
             [optimizer],
@@ -329,6 +237,7 @@ class Model(pl.LightningModule):
                 }
             ]
         )
+
 
 if __name__ == '__main__':
     # 하이퍼 파라미터 등 각종 설정값을 입력받습니다
@@ -350,8 +259,6 @@ if __name__ == '__main__':
     parser.add_argument('--dev_path', default='./data/dev.csv')
     parser.add_argument('--test_path', default='./data/dev.csv')
     parser.add_argument('--predict_path', default='./data/test.csv')
-    parser.add_argument('--k_fold', default=10, type=int)
-    parser.add_argument('--seed', default=11, type=int)
 
     args = parser.parse_args()
 
@@ -359,43 +266,47 @@ if __name__ == '__main__':
     # args.continue_train = True if args.continue_train == "True" else False
     print(args)
 
-    # sweep_config 생성. 
-    sweep_config = {'name': f"{args.model_name}_based_lr-search-sweep",  # name : sweep_name
-                'method': 'grid',  # 'grid', 'uniform', 'bayesian'
-                'parameters': {'lr': {  # parameter  작성방식 여러개 있으니까, 노션 문서 참고
-                    'values': [1e-6, 1e-5, 2e-5, 3e-5]
-                },
-                    "batch_size": {
-                    "values": [16]
-                },
-                    "max_epoch": {
-                    "values": [1]
-                },
-                },
-                # goal : maximize, minimize
-                'metric': {'name': 'val_pearson', 'goal': 'maximize'}
-                }
-    # sweep_config 생성. 
+    # sweep_config 생성.
+    sweep_config = {'name': f"{args.model_name}_based-wm-step_bs_ep-5",  # name : sweep_name
+                    'method': 'grid',  # 'grid', 'uniform', 'bayesian'
+                    'parameters': {
+                        'lr': {  # parameter  작성방식 여러개 있으니까, 노션 문서 참고
+                            'values': [1e-5]
+                        },
+                        'warmup_step': {
+                            "values": [100]
+                        },
+                        "batch_size": {
+                            "values": [32]
+                        },
+                        "max_epoch": {
+                            "values": [5]
+                        },
+                    },
+                    # goal : maximize, minimize
+                    'metric': {'name': 'val_pearson', 'goal': 'maximize'}
+                    }
+    # sweep_config 생성.
 
     # Wandb logging 설정.
     def sweep_train(config=None):
         run = wandb.init(config=config)
         config = wandb.config
         # run_name : sweep 안에 학습을 시키고있는 학습환경의 이름
-        run.name = f"model: {args.model_name} / batch_size: {config.batch_size} / lr: {config.lr}"
+        run.name = f"model: {args.model_name} / batch_size: {config.batch_size} / lr: {config.lr} / warmup: {config.warmup_step}"
 
         # seed_everything import 하시고 사용하셔야 합니다. [ 모델 생성 및 data loader 학습 코드 위치 ]
-        seed_everything(args.seed, workers=True)
+        seed_everything(10, workers=True)
 
         dataloader = Dataloader(args.model_name, config.batch_size, args.shuffle, args.train_path, args.dev_path,
-                                args.test_path, args.predict_path, args.k_fold, args.seed)
+                                args.test_path, args.predict_path)
 
         # dataloader와 model을 생성합니다.
-        model = Model(args.model_name, config.lr)
+        model = Model(args.model_name, config.lr, config.warmup_step)
         wandb_logger = WandbLogger()
 
         # gpu가 없으면 accelerator='cpu', 있으면 accelerator='gpu'
-        trainer = pl.Trainer(accelerator='gpu', max_epochs=args.max_epoch,
+        trainer = pl.Trainer(accelerator='gpu', max_epochs=config.max_epoch,
                              log_every_n_steps=1, logger=wandb_logger)
 
         # Train part
@@ -404,13 +315,14 @@ if __name__ == '__main__':
         trainer.test(model=model, datamodule=dataloader)
 
         # 학습이 완료된 모델을 저장합니다.
-        torch.save(
-            model, f'model_bat_{config.batch_size}_lr_{config.lr}.pt')
+        torch.save(model, f'model_{run.id}.pt')
         # sweep 한번 finish 시에, slack 알림 발송입니다.
         run.alert(title="Training Finshed",
                   text=f"[batch_size : {config.batch_size} / lr : {config.lr}] Model Finished", level=wandb.AlertLevel.INFO)
         # run.finish()
     # Wandb logging 설정.
+
+    # args.train = False
 
     if args.train:
         print("Train mode")
@@ -432,7 +344,7 @@ if __name__ == '__main__':
 
         # Inference part
         # 저장된 모델로 예측을 진행합니다.
-        model = torch.load('model.pt')
+        model = torch.load('model_bat_32_lr_1e-05_wm-100.pt')
         predictions = trainer.predict(model=model, datamodule=dataloader)
 
         # 예측된 결과를 형식에 맞게 반올림하여 준비합니다.
@@ -441,5 +353,4 @@ if __name__ == '__main__':
         # output 형식을 불러와서 예측된 결과로 바꿔주고, output.csv로 출력합니다.
         output = pd.read_csv('./data/sample_submission.csv')
         output['target'] = predictions
-        output['target'] = output['target'].applymap(lambda x: min(max(0.0, x), 5.0))
         output.to_csv('output.csv', index=False)
