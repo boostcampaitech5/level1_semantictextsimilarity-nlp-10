@@ -1,6 +1,10 @@
 import os
 import argparse
 import pandas as pd
+# !pip install git+https://github.com/jungin500/py-hanspell
+from hanspell import spell_checker
+import re
+
 import transformers
 import torch
 import wandb
@@ -11,7 +15,6 @@ from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
 from pytorch_lightning import seed_everything
 from pytorch_lightning.loggers import WandbLogger
-
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -76,16 +79,75 @@ class Dataloader(pl.LightningDataModule):
             sampled_train_data[switched_columns[1]], sampled_train_data[switched_columns[0]]
         df = pd.concat([df, sampled_train_data], axis=0)
         df = df.reset_index(drop=True)
+        return df
+    def aug_rand_del(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_deletion', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                if len(words) == 1:
+                    new_words = words
+                else :
+                    new_words = []
+                    for word in words:
+                        if random.uniform(0, 1) > p:
+                            #not delete
+                            new_words.append(word)
+                if len(new_words)==0:
+                    new_words = words[random.randint(0, len(words)-1)]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def aug_rand_swap(self, df, p=0.2):
+        def inside_swap_words(new_words):
+            index1 = random.randint(0, len(new_words)-1)
+            index2 = index1
+            count = 0
+            while index1 == index2:
+                index2 = random.randint(0, len(new_words)-1)
+                count += 1
+                if count > 3:
+                    return new_words
+            new_words[index1], new_words[index2] = new_words[index2], new_words[index1]
+            return new_words
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='random_swap', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                new_words = words.copy()
+                for _ in range(int(len(new_words)*p)):
+                    new_words = inside_swap_words(new_words)
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
 
         return df
+    def aug_only_middle(self, df, p=0.2):
+        temp = pd.DataFrame()
+        for idx, item in tqdm(df.iterrows(), desc='only_middle', total=len(df)):
+            for text_column in self.text_columns:
+                words = item[text_column].split()
+                start = max(int(len(words)*p), 1)
+                #최소 한 글자는 없애야 해서 max(~, 1)
+                end = len(words)-start
+                if len(words)<=3:
+                    start, end = 0, len(words)
+                
+                new_words = words[start:end]
+                temp.loc[idx, text_column] = ' '.join(new_words)
+        temp[self.target_columns[0]] = df[self.target_columns[0]]
+        df = pd.concat([df, temp], axis=0)
+        df = df.reset_index(drop=True)
+        return df
+    def prepro_spell_checker(self, data):
+        data[self.text_columns] = data[self.text_columns].applymap(
+            lambda x : spell_checker.check(re.sub("&", " ", x)).checked)
+        return data
 
     # 추가 정의 함수 구간.
-    def reduce_sampling_label_close_zero(self, df, frac_v=0.6):
-        df = df.drop(df[df['label'] < 0.3]['label'].sample(frac=frac_v, random_state=self.seed, replace=False, axis=0).index)
-        return df
-    def aug_label_close_five(self, df, frac_v=0.8):
-        df = pd.concat([df, df[df['label'] > 4.5].sample(frac=frac_v, replace=False, random_state=self.seed)], axis=0)
-        return df
 
     def tokenizing(self, df_input):
         data_input = []
@@ -120,14 +182,17 @@ class Dataloader(pl.LightningDataModule):
             train_data = pd.read_csv(self.train_path)
             val_data = pd.read_csv(self.dev_path)
 
-            # 학습데이터 준비(Data Aug) => 나중에 Data Aug를 담당하는 하나의 함수로의 통합 필요
-            train_data = self.reduce_sampling_label_close_zero(train_data)
-            train_data = self.aug_label_close_five(train_data)
-            train_data = self.aug_switched_sentence(train_data,
-                                                    switched_columns=self.text_columns)
-
+            # 학습데이터 준비
+            # train_data = self.aug_switched_sentence(
+            #     train_data, switched_columns=self.text_columns) 
+            # train_data = self.aug_rand_del(train_data) 
+            # train_data = self.aug_rand_swap(train_data) 
+            # train_data = self.aug_only_middle(train_data) 
+            # 다양한 data aug는 여기에서
             self.after_aug_train_data = train_data
 
+            # 검증데이터 준비
+            val_data = self.prepro_spell_checker(val_data)
             if self.k_fold:
                 total_data = pd.concat([train_data, val_data], axis=0)
                 total_input, total_targets = self.preprocessing(total_data)
@@ -154,10 +219,12 @@ class Dataloader(pl.LightningDataModule):
         else:
             # 평가데이터 준비
             test_data = pd.read_csv(self.test_path)
+            test_data = self.prepro_spell_checker(test_data)
             test_inputs, test_targets = self.preprocessing(test_data)
             self.test_dataset = Dataset(test_inputs, test_targets)
 
             predict_data = pd.read_csv(self.predict_path)
+            predict_data = self.prepro_spell_checker(predict_data)
             predict_inputs, predict_targets = self.preprocessing(predict_data)
             self.predict_dataset = Dataset(predict_inputs, [])
 
@@ -374,4 +441,5 @@ if __name__ == '__main__':
         # output 형식을 불러와서 예측된 결과로 바꿔주고, output.csv로 출력합니다.
         output = pd.read_csv('./data/sample_submission.csv')
         output['target'] = predictions
+        output['target'] = output['target'].applymap(lambda x: min(max(0.0, x), 5.0))
         output.to_csv('output.csv', index=False)
