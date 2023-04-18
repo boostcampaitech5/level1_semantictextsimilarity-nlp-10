@@ -248,7 +248,7 @@ class Dataloader(pl.LightningDataModule):
             return sampler
 
         # shuffle=args.shuffle
-        return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=8, sampler=make_sampler(self.after_aug_train_data))
+        return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=8)
 
     def val_dataloader(self):
         return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.batch_size)
