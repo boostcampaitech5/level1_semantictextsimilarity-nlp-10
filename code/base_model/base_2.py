@@ -37,7 +37,9 @@ class Dataset(torch.utils.data.Dataset):
 
 
 class Dataloader(pl.LightningDataModule):
-    def __init__(self, model_name, batch_size, shuffle, train_path, dev_path, test_path, predict_path, k_fold=True, num_split=10, k=1, seed=11):
+    def __init__(self, model_name, batch_size, shuffle,
+                 train_path, dev_path, test_path, predict_path,
+                 k_fold=True, num_split=10, k=1, seed=11,):
         super().__init__()
         # Base Info
         self.model_name = model_name
@@ -157,7 +159,7 @@ class Dataloader(pl.LightningDataModule):
             text = '[SEP]'.join([item[text_column]
                                  for text_column in self.text_columns])
             outputs = self.tokenizer(
-                text, add_special_tokens=True, padding='max_length', truncation=True)
+                text, add_special_tokens=True, padding='max_length', truncation=True, max_length=160)
             data_input.append(outputs['input_ids'])
 
         return data_input
@@ -205,6 +207,7 @@ class Dataloader(pl.LightningDataModule):
                 train_idx, val_idx = train_idx.tolist(), val_idx.tolist()
 
                 self.train_dataset = [total_dataset[i] for i in train_idx]
+                self.after_aug_train_data = total_data.iloc[train_idx, :]
                 self.val_dataset = [total_dataset[i] for i in val_idx]
             else:
                 # 학습데이터 준비
@@ -248,7 +251,7 @@ class Dataloader(pl.LightningDataModule):
             return sampler
 
         # shuffle=args.shuffle
-        return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=8)
+        return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=8, sampler=make_sampler(self.after_aug_train_data))
 
     def val_dataloader(self):
         return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.batch_size)
@@ -354,19 +357,21 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=11, type=int)
 
     args = parser.parse_args()
+    # seed_everything import 하시고 사용하셔야 합니다. [ 모델 생성 및 data loader 학습 코드 위치 ]
+    seed_everything(args.seed, workers=True)
 
     # args.train = True if args.train == "True" else False
     # args.continue_train = True if args.continue_train == "True" else False
     print(args)
 
     # sweep_config 생성. 
-    sweep_config = {'name': f"{args.model_name}_based_lr-search-sweep",  # name : sweep_name
+    sweep_config = {'name': f"{args.model_name}_based_source",  # name : sweep_name
                 'method': 'grid',  # 'grid', 'uniform', 'bayesian'
                 'parameters': {'lr': {  # parameter  작성방식 여러개 있으니까, 노션 문서 참고
-                    'values': [1e-6, 1e-5, 2e-5, 3e-5]
+                    'values': [1e-5]
                 },
                     "batch_size": {
-                    "values": [16]
+                    "values": [16, 32]
                 },
                     "max_epoch": {
                     "values": [1]
